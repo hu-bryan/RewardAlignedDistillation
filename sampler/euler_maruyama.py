@@ -1,9 +1,10 @@
 # sde/euler_maruyama.py
 import jax
+import jax.lax as lax
 import jax.numpy as np
 from jax import random
 from typing import Union
-from .coefficients import Coefficient
+from coefficients import Coefficient
 
 class EulerMaruyama:
     def __init__(
@@ -66,20 +67,42 @@ class EulerMaruyama:
         return Y
 
     def _solve_numerical_approximation(self, dim: int, key: jax.Array) -> np.ndarray:
-        Y = self._allocate_Y(dim=dim)
-        noise_shape = (dim, self._n_steps) + self._state_shape
-        dW = random.normal(key, shape=noise_shape) * np.sqrt(self.delta)
+        X0 = np.asarray(self._X_0, dtype=np.float32)
+        delta = np.asarray(self.delta, dtype=np.float32)
 
-        for n in range(self._n_steps):
-            tau_n = self.t[n]
-            Y_n = Y[:, n]
-            mu = self._drift.get_value(X=Y_n, t=tau_n)
-            sigma = self._diffusion.get_value(X=Y_n, t=tau_n)
-            incr = mu * self.delta + sigma * dW[:, n]
-            Y = Y.at[:, n + 1].set(Y_n + incr)
+        noise_shape = (self._n_steps, dim) + self._state_shape
+        dW = random.normal(key, shape=noise_shape, dtype=np.float32) * np.sqrt(delta)
 
-        return Y
+        Y0 = np.broadcast_to(X0, (dim,) + self._state_shape)
+
+        drift_batched = lambda y, t: self._drift.get_value(y[None, ...], t)[0]
+        diff_batched = lambda y, t: self._diffusion.get_value(y[None, ...], t)[0]
+
+        drift_batched = jax.vmap(drift_batched, in_axes=(0, None))
+        diff_batched = jax.vmap(diff_batched, in_axes=(0, None))
+
+        t_seq = np.asarray(self.t[:-1], dtype=np.float32)
+
+        def body(Y_n, x):
+
+            t_n, dW_n = x
+            mu = drift_batched(Y_n, t_n)
+            sigma = diff_batched(Y_n, t_n)
+            Y_next = Y_n + mu * delta + sigma * dW_n
+            return Y_next, Y_next
+        
+        xs = (t_seq, dW)
+
+        _, Y_steps = lax.scan(body, Y0, xs)
+
+        Y_steps = np.transpose(Y_steps, (1, 0) + tuple(range(2, Y_steps.ndim)))
+        
+        Y0_expanded = np.expand_dims(Y0, axis = 1)
+        Y_full = np.concatenate([Y0_expanded, Y_steps], axis=1)
+
+        return Y_full
 
     def compute_numerical_approximation(self, key: jax.Array) -> np.ndarray:
-        self.Y = self._solve_numerical_approximation(dim=self._n_sim, key=key)
+        solve = jax.jit(self._solve_numerical_approximation, static_argnames=("dim",))
+        self.Y = solve(dim=self._n_sim, key=key)
         return self.Y

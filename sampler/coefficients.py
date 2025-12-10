@@ -42,3 +42,14 @@ class ConstantImageDiffusion(Coefficient):
 
     def get_value(self, X, t):
         return np.ones_like(X) * self.b
+
+class epsilon(Coefficient):
+    """sigma(X_t, t) = sqrt(1 - t)"""
+
+    def init(self):
+        super().init()
+
+    def get_value(self, X: np.ndarray, t: float) -> np.ndarray:
+        # Clip to avoid sqrt of negative if t slightly > 1 due to numerics
+        s = np.sqrt(np.maximum(1.0 - t, 0.0 + 1e-6))
+        return s * np.ones_like(X)

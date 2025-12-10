@@ -1,11 +1,11 @@
 # guidance/drift.py
 import jax
 import jax.numpy as np
-from coefficients import Coefficient
+from .coefficients import Coefficient
 
 def eps_fn(t: float) -> float:
     # global / shared guidance schedule
-    return 1.0
+    return 1.0 - t
 
 def make_phi_fn(net, params, class_label: int):
     def phi_single(x, s, t):
